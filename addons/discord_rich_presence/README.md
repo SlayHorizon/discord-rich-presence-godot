@@ -15,4 +15,5 @@ Windows only for now: on Linux and macOS the Discord IPC is a unix socket,
 and GDScript cannot open those. Everywhere else the node does nothing.
 
 Full documentation and the two Godot pitfalls this addon works around are
-in the repository README. [MIT License](../../LICENSE).
+in the [repository README](https://github.com/SlayHorizon/discord-rich-presence-godot).
+[MIT License](LICENSE).
