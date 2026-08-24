@@ -1,6 +1,6 @@
 # Discord Rich Presence for Godot
 
-Discord Rich Presence for Godot 4.3+ in pure GDScript. No GDExtension, no
+Discord Rich Presence for Godot 4.4+ in pure GDScript. No GDExtension, no
 DLLs, no Game SDK. This folder is the whole addon: one script class,
 `DiscordRichPresence`, nothing to enable in the editor.
 
@@ -11,9 +11,10 @@ add_child(presence)
 presence.set_activity({"details": "In the Hub", "state": "Level 12"})
 ```
 
-Windows only for now: on Linux and macOS the Discord IPC is a unix socket,
-and GDScript cannot open those. Everywhere else the node does nothing.
+Works on Windows (named pipe) and macOS (unix socket bridged through the
+system `nc`). Linux uses the same bridge and should work, not tested yet.
+Everywhere else the node does nothing.
 
-Full documentation and the two Godot pitfalls this addon works around are
+Full documentation and the Godot pitfalls this addon works around are
 in the [repository README](https://github.com/SlayHorizon/discord-rich-presence-godot).
 [MIT License](LICENSE).

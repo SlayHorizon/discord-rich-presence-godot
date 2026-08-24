@@ -2,14 +2,16 @@ class_name DiscordRichPresence
 extends Node
 ## Discord Rich Presence in pure GDScript. No GDExtension, no Game SDK.
 ##
-## Talks directly to the Discord client over its local IPC named pipe.
+## Talks directly to the Discord client over its local IPC channel.
 ## A frame is [opcode u32][length u32] in little endian, then a JSON body.
 ## Handshake with your application id (op 0), then SET_ACTIVITY (op 1)
 ## when the presence changes.
 ##
-## Windows only for now: on Linux and macOS the Discord IPC is a unix
-## socket, and GDScript cannot open those. On any platform where the pipe
-## is not available (web, mobile, headless), this node does nothing.
+## On Windows the channel is a named pipe, opened with FileAccess. On
+## macOS and Linux it is a unix socket, which GDScript cannot open, so
+## the addon bridges it through the system netcat with
+## OS.execute_with_pipe (Godot 4.4+). On any platform where no channel
+## is available (web, mobile, headless), this node does nothing.
 ## Discord not running is not an error either: the client retries alone.
 ##
 ## Note: Godot only opens Windows named pipes with the "\\?\pipe\name"
@@ -24,7 +26,7 @@ extends Node
 ## Emitted when the handshake completes. [param user] is the Discord user
 ## object (id, username, ...).
 signal presence_connected(user: Dictionary)
-## Emitted when the pipe drops. The client retries by itself.
+## Emitted when the connection drops. The client retries by itself.
 signal presence_disconnected
 
 const _OP_HANDSHAKE: int = 0
@@ -42,6 +44,8 @@ const _RETRY_SECONDS: float = 20.0
 @export var app_id: String = ""
 
 var _pipe: FileAccess
+## Process id of the netcat bridge on macOS and Linux, -1 when unused.
+var _bridge_pid: int = -1
 var _ready_received: bool = false
 var _wanted_activity: Dictionary = {}
 var _activity_dirty: bool = false
@@ -53,6 +57,10 @@ func _ready() -> void:
 	connect_now()
 
 
+func _exit_tree() -> void:
+	_drop()
+
+
 func _process(delta: float) -> void:
 	if _pipe == null:
 		_retry_left -= delta
@@ -60,19 +68,24 @@ func _process(delta: float) -> void:
 			_retry_left = _RETRY_SECONDS
 			_try_connect()
 		return
+	# A dead bridge means Discord closed the socket (or was never there).
+	if _bridge_pid != -1 and not OS.is_process_running(_bridge_pid):
+		_drop()
+		return
 	_poll_frames()
 	if _activity_dirty and _ready_received and _pipe:
 		_activity_dirty = false
-		_send(_OP_FRAME, {
-			"cmd": "SET_ACTIVITY",
-			"args": {"pid": OS.get_process_id(), "activity": _wanted_activity},
-			"nonce": str(_nonce),
-		})
+		var args: Dictionary = {"pid": OS.get_process_id()}
+		# JSON null clears the presence; an empty object does not.
+		args["activity"] = null if _wanted_activity.is_empty() else _wanted_activity
+		_send(_OP_FRAME, {"cmd": "SET_ACTIVITY", "args": args, "nonce": str(_nonce)})
 		_nonce += 1
 
 
-## Restart the connection cycle. Safe to call at any time.
+## Restart the connection cycle, dropping the current connection if any.
+## Safe to call at any time, needed after changing app_id.
 func connect_now() -> void:
+	_drop()
 	_retry_left = 0.0
 	set_process(_supported())
 
@@ -91,22 +104,76 @@ func clear_activity() -> void:
 
 
 func _supported() -> bool:
-	return OS.get_name() == "Windows" and DisplayServer.get_name() != "headless"
+	if DisplayServer.get_name() == "headless":
+		return false
+	return OS.get_name() in ["Windows", "macOS", "Linux"]
 
 
 func _try_connect() -> void:
 	if app_id.is_empty():
 		return
-	for index: int in _MAX_PIPE_INDEX + 1:
-		# Only the "\\?\pipe\" path form works, see the class doc.
-		var path: String = "\\\\?\\pipe\\discord-ipc-%d" % index
-		var pipe: FileAccess = FileAccess.open(path, FileAccess.READ_WRITE)
-		if pipe == null:
-			continue
-		_pipe = pipe
-		_ready_received = false
-		_send(_OP_HANDSHAKE, {"v": 1, "client_id": app_id})
+	if OS.get_name() == "Windows":
+		for index: int in _MAX_PIPE_INDEX + 1:
+			# Only the "\\?\pipe\" path form works, see the class doc.
+			var path: String = "\\\\?\\pipe\\discord-ipc-%d" % index
+			var pipe: FileAccess = FileAccess.open(path, FileAccess.READ_WRITE)
+			if pipe == null:
+				continue
+			_attach(pipe)
+			return
 		return
+	var bridge: String = _find_bridge()
+	if bridge.is_empty():
+		return
+	for path: String in _unix_socket_paths():
+		var spawned: Dictionary = OS.execute_with_pipe(bridge, ["-U", path], false)
+		if spawned.is_empty():
+			continue
+		# If nothing listens on the socket, netcat exits at once and the
+		# dead-bridge check in _process falls back to the retry cycle.
+		_bridge_pid = spawned["pid"]
+		_attach(spawned["stdio"])
+		return
+
+
+func _attach(pipe: FileAccess) -> void:
+	_pipe = pipe
+	_ready_received = false
+	_send(_OP_HANDSHAKE, {"v": 1, "client_id": app_id})
+
+
+## macOS ships nc; on Linux any netcat with unix socket support works.
+func _find_bridge() -> String:
+	for name: String in ["nc", "ncat"]:
+		var output: Array = []
+		if OS.execute("which", [name], output) == 0:
+			return str(output[0]).strip_edges()
+	return ""
+
+
+## Discord puts its socket in the first set directory of this env list,
+## or /tmp. Flatpak and snap builds use a subdirectory of the runtime dir.
+func _unix_socket_paths() -> PackedStringArray:
+	var dirs: PackedStringArray = []
+	for env: String in ["XDG_RUNTIME_DIR", "TMPDIR", "TMP", "TEMP"]:
+		var value: String = OS.get_environment(env)
+		if not value.is_empty():
+			dirs.append(value)
+			break
+	if dirs.is_empty():
+		dirs.append("/tmp")
+	var runtime: String = OS.get_environment("XDG_RUNTIME_DIR")
+	if not runtime.is_empty():
+		dirs.append(runtime.path_join("app/com.discordapp.Discord"))
+		dirs.append(runtime.path_join("snap.discord"))
+	var paths: PackedStringArray = []
+	for dir: String in dirs:
+		# Sockets are not files for FileAccess.file_exists, but directory
+		# listing sees them.
+		for file: String in DirAccess.get_files_at(dir):
+			if file.begins_with("discord-ipc-"):
+				paths.append(dir.path_join(file))
+	return paths
 
 
 func _poll_frames() -> void:
@@ -156,6 +223,9 @@ func _send(op: int, body: Dictionary) -> void:
 
 
 func _drop() -> void:
+	if _bridge_pid != -1:
+		OS.kill(_bridge_pid)
+		_bridge_pid = -1
 	_pipe = null
 	if _ready_received:
 		_ready_received = false

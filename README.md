@@ -1,7 +1,9 @@
 # Discord Rich Presence for Godot
 
-Discord Rich Presence for Godot 4.3+ in pure GDScript. No GDExtension, no
+Discord Rich Presence for Godot 4.4+ in pure GDScript. No GDExtension, no
 DLLs, no Game SDK. One script.
+([v1.0](https://github.com/SlayHorizon/discord-rich-presence-godot/tree/v1.0)
+runs on 4.3, Windows only.)
 
 <p align="center">
   <img src="docs/presence_ingame.png" alt="Rich Presence in a Discord profile" width="320">
@@ -40,22 +42,27 @@ Assets. The key is the uploaded file name and cannot be renamed after.
 
 ## How it works
 
-The Discord desktop client listens on a local named pipe. The protocol is
-simple:
+The Discord desktop client listens on a local IPC channel: a named pipe on
+Windows, a unix socket on macOS and Linux. The protocol is simple:
 
 - one frame = `[opcode u32 LE][length u32 LE][JSON body]`
 - op 0: handshake `{"v": 1, "client_id": "<app id>"}`, Discord answers READY
 - op 1: `SET_ACTIVITY` when your presence changes
 - op 3/4: ping/pong, op 2: close
 
+On Windows, Godot opens the pipe directly with `FileAccess`. GDScript
+cannot open unix sockets, so on macOS and Linux the addon spawns the
+system netcat (`nc -U`) with `OS.execute_with_pipe()` and talks to the
+socket through it. Still no shipped binary: netcat is part of the OS.
+
 The client connects when it can, retries every 20s while Discord is closed,
 and sends the last activity again after a reconnect. Discord being absent
 is never an error.
 
-## Two Godot pitfalls to know
+## Godot pitfalls to know
 
-I hit both while writing this. They are handled by the addon, but if you
-write your own client they will save you a day:
+I hit all of these while writing this. They are handled by the addon, but
+if you write your own client they will save you a day:
 
 1. Godot only opens Windows named pipes with the `\\?\pipe\name` path
    form. The usual `\\.\pipe\name` form fails with `ERR_FILE_NOT_FOUND`.
@@ -64,13 +71,20 @@ write your own client they will save you a day:
    OS pipe. So read a frame's header and body in the same pass: a second
    `get_length()` check after the header will report 0 while your bytes
    are in the buffer.
+3. `OS.execute_with_pipe()` gives blocking pipes by default: the first
+   read with no data freezes your game. Pass `blocking = false`, which
+   exists since Godot 4.4. This is why the addon needs 4.4 outside
+   Windows.
+4. `FileAccess.file_exists()` returns false for a unix socket. To find
+   one, list its directory with `DirAccess.get_files_at()` instead.
 
 ## Platform support
 
 | Platform | Presence |
 |---|---|
 | Windows | yes |
-| Linux / macOS | not yet: the Discord IPC is a unix socket there, and GDScript cannot open those |
+| macOS | yes, bridged through the system `nc` |
+| Linux | same bridge, should work, but I could not test it yet. Reports welcome |
 | Web / Android / iOS / headless | does nothing, by design |
 
 You do not need any platform check on your side.
@@ -85,7 +99,8 @@ You do not need any platform check on your side.
 - `clear_activity()`: remove the presence, keep the connection.
 - signal `presence_connected(user: Dictionary)`: handshake done, `user` is
   the Discord user object.
-- signal `presence_disconnected`: pipe dropped, the client retries alone.
+- signal `presence_disconnected`: connection dropped, the client retries
+  alone.
 
 ## License
 
