@@ -104,4 +104,5 @@ You do not need any platform check on your side.
 
 ## License
 
-Source code under the [MIT License](LICENSE).
+Source code under the [MIT License](LICENSE). The Godot logo in the icon
+is by Andrea Calabró, [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/).
