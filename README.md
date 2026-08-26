@@ -1,12 +1,14 @@
 # Discord Rich Presence for Godot
 
 Discord Rich Presence for Godot 4.4+ in pure GDScript. No GDExtension, no
-DLLs, no Game SDK. One script.
-([v1.0](https://github.com/SlayHorizon/discord-rich-presence-godot/tree/v1.0)
-runs on 4.3, Windows only.)
+DLLs, no Game SDK.
+
+One little script. Works on Windows, macOS and Linux.
 
 <p align="center">
-  <img src="docs/presence_ingame.png" alt="Rich Presence in a Discord profile" width="320">
+  <img src="docs/presence_ingame.png" alt="Rich Presence with details and state" width="280">
+  &nbsp;&nbsp;
+  <img src="docs/presence_gateway.png" alt="Rich Presence with details only" width="280">
 </p>
 
 I made this for my game [Ekonia Online](https://ekoniaonline.com) because I
@@ -27,7 +29,7 @@ pipe. Also, Discord deprecated most of the Game SDK.
 ```gdscript
 var presence := DiscordRichPresence.new()
 presence.app_id = "1234567890123456789"
-add_child(presence)
+add_child(presence)  # An autoload is the perfect parent: the connection lives as long as the node.
 
 presence.set_activity({
     "details": "In the Fungus Cave",
@@ -37,10 +39,17 @@ presence.set_activity({
 })
 ```
 
-Image keys come from your application page, under Rich Presence > Art
-Assets. The key is the uploaded file name and cannot be renamed after.
+(Image keys come from your application page, under Rich Presence > Art
+Assets.)
 
-## How it works
+Dead simple as that. The node connects when it can, retries every 20s while
+Discord is closed, and sends the last activity again after a reconnect.
+Discord being absent is never an error.
+
+## Under the hood
+
+<details>
+<summary>The protocol, for the curious. You do not need this to use the addon.</summary>
 
 The Discord desktop client listens on a local IPC channel: a named pipe on
 Windows, a unix socket on macOS and Linux. The protocol is simple:
@@ -55,14 +64,13 @@ cannot open unix sockets, so on macOS and Linux the addon spawns the
 system netcat (`nc -U`) with `OS.execute_with_pipe()` and talks to the
 socket through it. Still no shipped binary: netcat is part of the OS.
 
-The client connects when it can, retries every 20s while Discord is closed,
-and sends the last activity again after a reconnect. Discord being absent
-is never an error.
+</details>
 
 ## Godot pitfalls to know
 
-I hit all of these while writing this. They are handled by the addon, but
-if you write your own client they will save you a day:
+<details>
+<summary>I hit all of these while writing this. They are handled by the
+addon, but if you write your own client they will save you a day.</summary>
 
 1. Godot only opens Windows named pipes with the `\\?\pipe\name` path
    form. The usual `\\.\pipe\name` form fails with `ERR_FILE_NOT_FOUND`.
@@ -78,24 +86,33 @@ if you write your own client they will save you a day:
 4. `FileAccess.file_exists()` returns false for a unix socket. To find
    one, list its directory with `DirAccess.get_files_at()` instead.
 
+</details>
+
 ## Platform support
 
 | Platform | Presence |
 |---|---|
 | Windows | yes |
-| macOS | yes, bridged through the system `nc` |
-| Linux | same bridge, should work, but I could not test it yet. Reports welcome |
-| Web / Android / iOS / headless | does nothing, by design |
+| macOS / Linux | yes, bridged through the system `nc` |
+| Web / Android / iOS | does nothing: Discord has no RPC on these platforms |
+| Headless (servers, CI) | does nothing, by design |
 
 You do not need any platform check on your side.
+
+On Godot 4.3, use
+[v1.0](https://github.com/SlayHorizon/discord-rich-presence-godot/tree/v1.0):
+Windows only.
 
 ## API
 
 - `app_id: String`: your Discord application id. Set it before add_child,
   or call `connect_now()` after changing it.
 - `set_activity(activity: Dictionary)`: the SET_ACTIVITY activity object
-  (details, state, timestamps, assets, party, ...). Remembered across
-  reconnects, safe to call while Discord is closed.
+  (details, state, timestamps, assets, party, ...). The dictionary goes to
+  Discord as-is, so buttons and every future field work without addon
+  changes. Remembered across reconnects, safe to call while Discord is
+  closed. Call it when something changes, not every frame: Discord rate
+  limits presence updates.
 - `clear_activity()`: remove the presence, keep the connection.
 - signal `presence_connected(user: Dictionary)`: handshake done, `user` is
   the Discord user object.
