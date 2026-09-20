@@ -107,7 +107,8 @@ Windows only.
 
 - `app_id: String`: your Discord application id. Set it before add_child,
   or call `connect_now()` after changing it.
-- `set_activity(activity: Dictionary)`: the SET_ACTIVITY activity object
+- `set_activity(activity: Dictionary)`: the
+  [SET_ACTIVITY activity object](https://docs.discord.com/developers/topics/rpc)
   (details, state, timestamps, assets, party, ...). The dictionary goes to
   Discord as-is, so buttons and every future field work without addon
   changes. Remembered across reconnects, safe to call while Discord is
