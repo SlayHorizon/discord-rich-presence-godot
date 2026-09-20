@@ -46,6 +46,10 @@ const _RETRY_SECONDS: float = 20.0
 var _pipe: FileAccess
 ## Process id of the netcat bridge on macOS and Linux, -1 when unused.
 var _bridge_pid: int = -1
+## Looking netcat up costs a blocking process launch, and the answer does
+## not change while the game runs, so it is searched once and kept.
+var _bridge_path: String = ""
+var _bridge_searched: bool = false
 var _ready_received: bool = false
 var _wanted_activity: Dictionary = {}
 var _activity_dirty: bool = false
@@ -144,10 +148,15 @@ func _attach(pipe: FileAccess) -> void:
 
 ## macOS ships nc; on Linux any netcat with unix socket support works.
 func _find_bridge() -> String:
+	if _bridge_searched:
+		return _bridge_path
+	_bridge_searched = true
 	for name: String in ["nc", "ncat"]:
 		var output: Array = []
-		if OS.execute("which", [name], output) == 0:
-			return str(output[0]).strip_edges()
+		if OS.execute("which", [name], output) == 0 and not output.is_empty():
+			_bridge_path = str(output[0]).strip_edges()
+			if not _bridge_path.is_empty():
+				return _bridge_path
 	return ""
 
 
@@ -198,7 +207,12 @@ func _poll_frames() -> void:
 func _handle_frame(op: int, body: Dictionary) -> void:
 	match op:
 		_OP_FRAME:
-			if not _ready_received and str(body.get("cmd", "")) == "DISPATCH" \
+			if str(body.get("evt", "")) == "ERROR":
+				# E.g. a present but empty "details": Discord rejects the
+				# whole activity. Without this warning the failure is silent.
+				push_warning("DiscordRichPresence: Discord refused: %s" % str(
+						(body.get("data", {}) as Dictionary).get("message", body)))
+			elif not _ready_received and str(body.get("cmd", "")) == "DISPATCH" \
 					and str(body.get("evt", "")) == "READY":
 				_ready_received = true
 				_activity_dirty = true  # Reassert the wanted presence.
