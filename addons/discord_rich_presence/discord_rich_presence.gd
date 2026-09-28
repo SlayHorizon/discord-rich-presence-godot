@@ -177,11 +177,12 @@ func _unix_socket_paths() -> PackedStringArray:
 		dirs.append(runtime.path_join("snap.discord"))
 	var paths: PackedStringArray = []
 	for dir: String in dirs:
-		# Sockets are not files for FileAccess.file_exists, but directory
-		# listing sees them.
-		for file: String in DirAccess.get_files_at(dir):
-			if file.begins_with("discord-ipc-"):
-				paths.append(dir.path_join(file))
+		if DirAccess.dir_exists_absolute(dir):
+			# Sockets are not files for FileAccess.file_exists, but directory
+			# listing sees them.
+			for file: String in DirAccess.get_files_at(dir):
+				if file.begins_with("discord-ipc-"):
+					paths.append(dir.path_join(file))
 	return paths
 
 
